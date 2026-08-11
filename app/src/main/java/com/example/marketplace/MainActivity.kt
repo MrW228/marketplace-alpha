@@ -61,6 +61,18 @@ import com.google.firebase.firestore.SetOptions
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.storage
 import coil.compose.AsyncImage
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import com.example.marketplace.ui.theme.MyApplicationTheme
 import java.util.Locale
 import android.net.Uri
@@ -72,6 +84,70 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+
+// Animation State
+class CartAnimationState(val scope: CoroutineScope) {
+    var animationData by mutableStateOf<AnimationData?>(null)
+
+    data class AnimationData(
+        val start: Offset,
+        val product: Product
+    )
+
+    fun trigger(start: Offset, product: Product) {
+        animationData = AnimationData(start, product)
+    }
+}
+
+val LocalCartAnimation = staticCompositionLocalOf<CartAnimationState> { error("No CartAnimationState provided") }
+val LocalCartPosition = compositionLocalOf { mutableStateOf(Offset.Zero) }
+
+@Composable
+fun CartFlyingAnimation(state: CartAnimationState, targetOffset: Offset) {
+    val data = state.animationData ?: return
+    
+    val animatable = remember { Animatable(data.start, Offset.VectorConverter) }
+    val alpha = remember { Animatable(1f) }
+
+    LaunchedEffect(data) {
+        animatable.snapTo(data.start)
+        alpha.snapTo(1f)
+        
+        launch {
+            animatable.animateTo(
+                targetValue = targetOffset,
+                animationSpec = spring(
+                    dampingRatio = 0.7f,
+                    stiffness = 300f
+                )
+            )
+        }
+        launch {
+            delay(400)
+            alpha.animateTo(0f, tween(300))
+            state.animationData = null
+        }
+    }
+
+    if (alpha.value > 0f) {
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(animatable.value.x.roundToInt(), animatable.value.y.roundToInt()) }
+                .size(40.dp)
+                .alpha(alpha.value)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.ShoppingCart,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
 
 // Models
 data class Product(
@@ -433,6 +509,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MarketplaceApp(viewModel: MarketplaceViewModel, authViewModel: AuthViewModel, settingsViewModel: SettingsViewModel) {
     val navController = rememberNavController()
+    val coroutineScope = rememberCoroutineScope()
+    val cartAnimationState = remember { CartAnimationState(coroutineScope) }
+    val cartPosition = remember { mutableStateOf(Offset.Zero) }
 
     val items = listOf(
         Screen.Home,
@@ -455,146 +534,152 @@ fun MarketplaceApp(viewModel: MarketplaceViewModel, authViewModel: AuthViewModel
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            val currentRoute = currentDestination?.route
-            if (currentRoute != Screen.Login.route && currentRoute != Screen.Register.route) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    tonalElevation = 0.dp,
-                ) {
-                    items.forEach { screen ->
-                        val isSelected = (currentRoute == "main_tabs" && 
-                                         ((screen == Screen.Home && (navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") ?: 0) == 0) ||
-                                          (screen == Screen.Catalog && navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") == 1) ||
-                                          (screen == Screen.Profile && navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") == 2)))
-                                         || currentRoute == screen.route
+    CompositionLocalProvider(
+        LocalCartAnimation provides cartAnimationState,
+        LocalCartPosition provides cartPosition
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = MaterialTheme.colorScheme.background,
+            bottomBar = {
+                val currentRoute = currentDestination?.route
+                if (currentRoute != Screen.Login.route && currentRoute != Screen.Register.route) {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        tonalElevation = 0.dp,
+                    ) {
+                        items.forEach { screen ->
+                            val isSelected = (currentRoute == "main_tabs" && 
+                                             ((screen == Screen.Home && (navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") ?: 0) == 0) ||
+                                              (screen == Screen.Catalog && navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") == 1) ||
+                                              (screen == Screen.Profile && navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") == 2)))
+                                             || currentRoute == screen.route
 
-                        NavigationBarItem(
-                            icon = { 
-                                AnimatedContent(targetState = screen.icon, label = "icon") { icon ->
-                                    Icon(icon, contentDescription = screen.title) 
-                                }
-                            },
-                            label = { Text(screen.title, fontWeight = FontWeight.Bold) },
-                            selected = isSelected,
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            onClick = {
-                                if (screen in items) {
-                                    navController.navigate("main_tabs") {
-                                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
+                            NavigationBarItem(
+                                icon = { 
+                                    AnimatedContent(targetState = screen.icon, label = "icon") { icon ->
+                                        Icon(icon, contentDescription = screen.title) 
                                     }
-                                    // Handle pager index via savedStateHandle or direct state if possible
-                                    navController.currentBackStackEntry?.savedStateHandle?.set("pager_index", items.indexOf(screen))
-                                } else {
-                                    onNavigate(screen.route)
+                                },
+                                label = { Text(screen.title, fontWeight = FontWeight.Bold) },
+                                selected = isSelected,
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                onClick = {
+                                    if (screen in items) {
+                                        navController.navigate("main_tabs") {
+                                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                        // Handle pager index via savedStateHandle or direct state if possible
+                                        navController.currentBackStackEntry?.savedStateHandle?.set("pager_index", items.indexOf(screen))
+                                    } else {
+                                        onNavigate(screen.route)
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
-        }
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = startDestination,
-            modifier = Modifier.padding(innerPadding),
-            enterTransition = { 
-                val from = initialState.destination.route
-                val to = targetState.destination.route
-                val fromIndex = getRouteIndex(from)
-                val toIndex = getRouteIndex(to)
-                
-                if (fromIndex != -1 && toIndex != -1) {
-                    if (toIndex > fromIndex) {
-                        slideInHorizontally(animationSpec = tween(400)) { it } + fadeIn(animationSpec = tween(400))
+        ) { innerPadding ->
+            NavHost(
+                navController = navController,
+                startDestination = startDestination,
+                modifier = Modifier.padding(innerPadding),
+                enterTransition = { 
+                    val from = initialState.destination.route
+                    val to = targetState.destination.route
+                    val fromIndex = getRouteIndex(from)
+                    val toIndex = getRouteIndex(to)
+                    
+                    if (fromIndex != -1 && toIndex != -1) {
+                        if (toIndex > fromIndex) {
+                            slideInHorizontally(animationSpec = tween(400)) { it } + fadeIn(animationSpec = tween(400))
+                        } else {
+                            slideInHorizontally(animationSpec = tween(400)) { -it } + fadeIn(animationSpec = tween(400))
+                        }
                     } else {
-                        slideInHorizontally(animationSpec = tween(400)) { -it } + fadeIn(animationSpec = tween(400))
+                        fadeIn(animationSpec = tween(400))
                     }
-                } else {
-                    fadeIn(animationSpec = tween(400))
-                }
-            },
-            exitTransition = { 
-                val from = initialState.destination.route
-                val to = targetState.destination.route
-                val fromIndex = getRouteIndex(from)
-                val toIndex = getRouteIndex(to)
+                },
+                exitTransition = { 
+                    val from = initialState.destination.route
+                    val to = targetState.destination.route
+                    val fromIndex = getRouteIndex(from)
+                    val toIndex = getRouteIndex(to)
 
-                if (fromIndex != -1 && toIndex != -1) {
-                    if (toIndex > fromIndex) {
-                        slideOutHorizontally(animationSpec = tween(400)) { -it } + fadeOut(animationSpec = tween(400))
+                    if (fromIndex != -1 && toIndex != -1) {
+                        if (toIndex > fromIndex) {
+                            slideOutHorizontally(animationSpec = tween(400)) { -it } + fadeOut(animationSpec = tween(400))
+                        } else {
+                            slideOutHorizontally(animationSpec = tween(400)) { it } + fadeOut(animationSpec = tween(400))
+                        }
                     } else {
-                        slideOutHorizontally(animationSpec = tween(400)) { it } + fadeOut(animationSpec = tween(400))
+                        fadeOut(animationSpec = tween(400))
                     }
-                } else {
-                    fadeOut(animationSpec = tween(400))
                 }
-            }
-        ) {
-            composable(Screen.Login.route) {
-                LoginScreen(
-                    viewModel = authViewModel,
-                    onNavigateToRegister = { navController.navigate(Screen.Register.route) },
-                    onLoginSuccess = {
-                        navController.navigate("main_tabs") {
-                            popUpTo(Screen.Login.route) { inclusive = true }
+            ) {
+                composable(Screen.Login.route) {
+                    LoginScreen(
+                        viewModel = authViewModel,
+                        onNavigateToRegister = { navController.navigate(Screen.Register.route) },
+                        onLoginSuccess = {
+                            navController.navigate("main_tabs") {
+                                popUpTo(Screen.Login.route) { inclusive = true }
+                            }
                         }
-                    }
-                )
-            }
-            composable(Screen.Register.route) {
-                RegistrationScreen(
-                    viewModel = authViewModel,
-                    onNavigateToLogin = { navController.popBackStack() },
-                    onRegisterSuccess = {
-                        navController.navigate("main_tabs") {
-                            popUpTo(Screen.Login.route) { inclusive = true }
+                    )
+                }
+                composable(Screen.Register.route) {
+                    RegistrationScreen(
+                        viewModel = authViewModel,
+                        onNavigateToLogin = { navController.popBackStack() },
+                        onRegisterSuccess = {
+                            navController.navigate("main_tabs") {
+                                popUpTo(Screen.Login.route) { inclusive = true }
+                            }
                         }
-                    }
-                )
-            }
-            composable("main_tabs") { backStackEntry ->
-                val pagerIndex = backStackEntry.savedStateHandle.getStateFlow("pager_index", 0).collectAsState()
-                MainTabsScreen(
-                    initialPage = pagerIndex.value,
-                    viewModel = viewModel,
-                    authViewModel = authViewModel,
-                    onNavigateToAdmin = { navController.navigate(Screen.Admin.route) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCart = { navController.navigate(Screen.Cart.route) },
-                    onNavigateToProductDetail = { productId ->
-                        navController.navigate(Screen.ProductDetail.createRoute(productId))
-                    },
-                    onLogout = {
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(0) { inclusive = true }
+                    )
+                }
+                composable("main_tabs") { backStackEntry ->
+                    val pagerIndex = backStackEntry.savedStateHandle.getStateFlow("pager_index", 0).collectAsState()
+                    MainTabsScreen(
+                        initialPage = pagerIndex.value,
+                        viewModel = viewModel,
+                        authViewModel = authViewModel,
+                        onNavigateToAdmin = { navController.navigate(Screen.Admin.route) },
+                        onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                        onNavigateToCart = { navController.navigate(Screen.Cart.route) },
+                        onNavigateToProductDetail = { productId ->
+                            navController.navigate(Screen.ProductDetail.createRoute(productId))
+                        },
+                        onLogout = {
+                            navController.navigate(Screen.Login.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        },
+                        onPageChanged = { index ->
+                            backStackEntry.savedStateHandle.set("pager_index", index)
                         }
-                    },
-                    onPageChanged = { index ->
-                        backStackEntry.savedStateHandle.set("pager_index", index)
-                    }
-                )
+                    )
+                }
+                composable(Screen.Admin.route) { AdminScreen(viewModel) { navController.popBackStack() } }
+                composable(Screen.Cart.route) { CartScreen(viewModel) { navController.popBackStack() } }
+                composable(Screen.ProductDetail.route) { backStackEntry ->
+                    val productId = backStackEntry.arguments?.getString("productId")?.toIntOrNull()
+                    ProductDetailScreen(productId, viewModel, { navController.popBackStack() }, { navController.navigate(Screen.Cart.route) })
+                }
+                composable(Screen.Settings.route) { SettingsScreen(settingsViewModel, viewModel) { navController.popBackStack() } }
             }
-            composable(Screen.Admin.route) { AdminScreen(viewModel) { navController.popBackStack() } }
-            composable(Screen.Cart.route) { CartScreen(viewModel) { navController.popBackStack() } }
-            composable(Screen.ProductDetail.route) { backStackEntry ->
-                val productId = backStackEntry.arguments?.getString("productId")?.toIntOrNull()
-                ProductDetailScreen(productId, viewModel, { navController.popBackStack() }, { navController.navigate(Screen.Cart.route) })
-            }
-            composable(Screen.Settings.route) { SettingsScreen(settingsViewModel, viewModel) { navController.popBackStack() } }
         }
+        CartFlyingAnimation(state = cartAnimationState, targetOffset = cartPosition.value)
     }
 }
 
@@ -717,13 +802,18 @@ fun HomeScreen(
             )
             
             // Cart Icon
+            val cartPosition = LocalCartPosition.current
             BadgedBox(
                 badge = {
                     if (cartItems.isNotEmpty()) {
                         Badge { Text(cartItems.size.toString()) }
                     }
                 },
-                modifier = Modifier.clickable { onNavigateToCart() }
+                modifier = Modifier
+                    .onGloballyPositioned { coordinates ->
+                        cartPosition.value = coordinates.positionInWindow()
+                    }
+                    .clickable { onNavigateToCart() }
             ) {
                 Icon(Icons.Default.ShoppingCart, contentDescription = "Cart", tint = MaterialTheme.colorScheme.primary)
             }
@@ -846,11 +936,19 @@ fun HomeScreen(
             modifier = Modifier.weight(1f)
         ) {
             items(filteredProducts) { product ->
+                val cartAnimation = LocalCartAnimation.current
                 AnimatedVisibility(
                     visible = true,
                     enter = fadeIn() + expandVertically()
                 ) {
-                    ProductCard(product, onClick = { onNavigateToProductDetail(product.id) })
+                    ProductCard(
+                        product = product,
+                        onClick = { onNavigateToProductDetail(product.id) },
+                        onQuickAdd = { startPos ->
+                            viewModel.addToCart(product)
+                            cartAnimation.trigger(startPos, product)
+                        }
+                    )
                 }
             }
         }
@@ -858,7 +956,7 @@ fun HomeScreen(
 }
 
 @Composable
-fun ProductCard(product: Product, onClick: () -> Unit) {
+fun ProductCard(product: Product, onClick: () -> Unit, onQuickAdd: (Offset) -> Unit = {}) {
     var isPressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.95f else 1f,
@@ -866,54 +964,113 @@ fun ProductCard(product: Product, onClick: () -> Unit) {
         label = "scale"
     )
 
-    Card(
+    val offsetX = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    var cardPosition by remember { mutableStateOf(Offset.Zero) }
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .graphicsLayer(scaleX = scale, scaleY = scale)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            // Image Area
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(product.color),
-                contentAlignment = Alignment.Center
-            ) {
-                if (product.imageUrl != null) {
-                    AsyncImage(
-                        model = product.imageUrl,
-                        contentDescription = product.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Text("📷", fontSize = 24.sp, modifier = Modifier.alpha(0.6f))
-                }
+            .onGloballyPositioned { cardPosition = it.positionInWindow() }
+            .pointerInput(Unit) {
+                val velocityTracker = VelocityTracker()
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        val velocity = velocityTracker.calculateVelocity().x
+                        scope.launch {
+                            if (offsetX.value > 80f || velocity > 400f) {
+                                offsetX.animateTo(100f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                            } else {
+                                offsetX.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 400f))
+                            }
+                        }
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        scope.launch {
+                            offsetX.snapTo((offsetX.value + dragAmount).coerceIn(0f, 150f))
+                        }
+                    }
+                )
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = product.title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+    ) {
+        // Quick Add Background Action
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer)
+                .clickable { 
+                    onQuickAdd(cardPosition)
+                    scope.launch { offsetX.animateTo(0f) }
+                },
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Icon(
+                Icons.Default.AddShoppingCart,
+                contentDescription = "Quick Add",
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.padding(start = 24.dp).size(28.dp)
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "$${product.price}",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
+        }
+
+        Card(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .fillMaxWidth()
+                .graphicsLayer(scaleX = scale, scaleY = scale)
+                .clip(RoundedCornerShape(16.dp))
+                .clickable { 
+                    if (offsetX.value > 0f) {
+                        scope.launch { offsetX.animateTo(0f) }
+                    } else {
+                        onClick()
+                    }
+                },
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                // Image Area
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(product.color),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (product.imageUrl != null) {
+                        AsyncImage(
+                            model = product.imageUrl,
+                            contentDescription = product.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Text("📷", fontSize = 24.sp, modifier = Modifier.alpha(0.6f))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = product.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "$${product.price}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
     }
 }
@@ -1276,6 +1433,8 @@ fun RegistrationScreen(viewModel: AuthViewModel, onNavigateToLogin: () -> Unit, 
 fun ProductDetailScreen(productId: Int?, viewModel: MarketplaceViewModel, onBack: () -> Unit, onGoToCart: () -> Unit) {
     val products by viewModel.products.collectAsState()
     val product = products.find { it.id == productId }
+    val cartAnimation = LocalCartAnimation.current
+    var buttonPosition by remember { mutableStateOf(Offset.Zero) }
 
     if (product == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1341,8 +1500,13 @@ fun ProductDetailScreen(productId: Int?, viewModel: MarketplaceViewModel, onBack
             Spacer(modifier = Modifier.height(32.dp))
 
             Button(
-                onClick = { viewModel.addToCart(product) },
-                modifier = Modifier.fillMaxWidth(),
+                onClick = { 
+                    viewModel.addToCart(product)
+                    cartAnimation.trigger(buttonPosition, product)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { buttonPosition = it.positionInWindow() },
                 shape = RoundedCornerShape(16.dp),
                 contentPadding = PaddingValues(16.dp)
             ) {

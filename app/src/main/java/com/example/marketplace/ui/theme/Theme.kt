@@ -51,13 +51,14 @@ fun MyApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     primaryColor: Color? = null,
     // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = false, // Disable dynamic color to enforce theme
+    dynamicColor: Boolean = true, // Enabled by default
     content: @Composable () -> Unit,
 ) {
+    val context = LocalContext.current
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            val baseScheme = if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (primaryColor != null) baseScheme.copy(primary = primaryColor) else baseScheme
         }
 
         darkTheme -> {

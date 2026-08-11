@@ -19,10 +19,15 @@ val fontName = GoogleFont("Montserrat")
 
 
 val MontserratFontFamily = FontFamily(
-    Font(googleFont = fontName, fontProvider = provider),
-    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.Bold),
-    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.Medium),
-    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.SemiBold)
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W100),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W200),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W300),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W400),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W500),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W600),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W700),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W800),
+    Font(googleFont = fontName, fontProvider = provider, weight = FontWeight.W900)
 )
 
 // Set of Material typography styles to start with
