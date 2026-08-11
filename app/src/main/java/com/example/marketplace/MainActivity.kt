@@ -61,6 +61,10 @@ import com.google.firebase.firestore.SetOptions
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.storage
 import coil.compose.AsyncImage
+import com.example.marketplace.support.SupportScreen
+import com.example.marketplace.support.SupportViewModel
+import com.example.marketplace.support.SupportMessage
+import com.example.marketplace.support.SupportMessageDao
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -193,9 +197,10 @@ interface CartDao {
     suspend fun clearCart()
 }
 
-@Database(entities = [CartItemEntity::class], version = 1)
+@Database(entities = [CartItemEntity::class, SupportMessage::class], version = 1)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun cartDao(): CartDao
+    abstract fun supportMessageDao(): SupportMessageDao
 }
 
 // ViewModel
@@ -478,6 +483,7 @@ class MainActivity : ComponentActivity() {
             AppDatabase::class.java, "marketplace-db"
         ).build()
         val cartDao = database.cartDao()
+        val supportMessageDao = database.supportMessageDao()
 
         enableEdgeToEdge()
         setContent {
@@ -500,14 +506,19 @@ class MainActivity : ComponentActivity() {
                     }
                 )
                 val authViewModel: AuthViewModel = viewModel()
-                MarketplaceApp(viewModel, authViewModel, settingsViewModel)
+                MarketplaceApp(viewModel, authViewModel, settingsViewModel, supportMessageDao)
             }
         }
     }
 }
 
 @Composable
-fun MarketplaceApp(viewModel: MarketplaceViewModel, authViewModel: AuthViewModel, settingsViewModel: SettingsViewModel) {
+fun MarketplaceApp(
+    viewModel: MarketplaceViewModel,
+    authViewModel: AuthViewModel,
+    settingsViewModel: SettingsViewModel,
+    supportMessageDao: SupportMessageDao
+) {
     val navController = rememberNavController()
     val coroutineScope = rememberCoroutineScope()
     val cartAnimationState = remember { CartAnimationState(coroutineScope) }
@@ -656,6 +667,7 @@ fun MarketplaceApp(viewModel: MarketplaceViewModel, authViewModel: AuthViewModel
                         authViewModel = authViewModel,
                         onNavigateToAdmin = { navController.navigate(Screen.Admin.route) },
                         onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                        onNavigateToSupport = { navController.navigate(Screen.Support.route) },
                         onNavigateToCart = { navController.navigate(Screen.Cart.route) },
                         onNavigateToProductDetail = { productId ->
                             navController.navigate(Screen.ProductDetail.createRoute(productId))
@@ -677,6 +689,18 @@ fun MarketplaceApp(viewModel: MarketplaceViewModel, authViewModel: AuthViewModel
                     ProductDetailScreen(productId, viewModel, { navController.popBackStack() }, { navController.navigate(Screen.Cart.route) })
                 }
                 composable(Screen.Settings.route) { SettingsScreen(settingsViewModel, viewModel) { navController.popBackStack() } }
+                composable(Screen.Support.route) {
+                    val userId = authViewModel.currentUser?.uid ?: authViewModel.offlineUserEmail ?: "guest"
+                    val userEmail = authViewModel.currentUser?.email ?: authViewModel.offlineUserEmail ?: "Guest"
+                    val supportViewModel: SupportViewModel = viewModel(
+                        factory = object : ViewModelProvider.Factory {
+                            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                                return SupportViewModel(userId, userEmail, supportMessageDao) as T
+                            }
+                        }
+                    )
+                    SupportScreen(supportViewModel) { navController.popBackStack() }
+                }
             }
         }
         CartFlyingAnimation(state = cartAnimationState, targetOffset = cartPosition.value)
@@ -702,6 +726,7 @@ fun MainTabsScreen(
     authViewModel: AuthViewModel,
     onNavigateToAdmin: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToSupport: () -> Unit,
     onNavigateToCart: () -> Unit,
     onNavigateToProductDetail: (Int) -> Unit,
     onLogout: () -> Unit,
@@ -724,7 +749,7 @@ fun MainTabsScreen(
         when (page) {
             0 -> HomeScreen(viewModel, authViewModel, onNavigateToAdmin, { onPageChanged(2) }, onNavigateToCart, onNavigateToProductDetail)
             1 -> CatalogScreen()
-            2 -> ProfileScreen(authViewModel, onNavigateToSettings, onLogout)
+            2 -> ProfileScreen(authViewModel, onNavigateToSettings, onNavigateToSupport, onLogout)
         }
     }
 }
@@ -741,6 +766,7 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
         fun createRoute(productId: Int) = "product_detail/$productId"
     }
     object Settings : Screen("settings", "Settings", Icons.Default.Settings)
+    object Support : Screen("support", "Support", Icons.Default.SupportAgent)
 }
 
 @Composable
@@ -1126,7 +1152,12 @@ fun CatalogScreen() {
 }
 
 @Composable
-fun ProfileScreen(viewModel: AuthViewModel, onNavigateToSettings: () -> Unit, onLogout: () -> Unit) {
+fun ProfileScreen(
+    viewModel: AuthViewModel,
+    onNavigateToSettings: () -> Unit,
+    onNavigateToSupport: () -> Unit,
+    onLogout: () -> Unit
+) {
     val userEmail = viewModel.currentUser?.email ?: viewModel.offlineUserEmail
     val isOffline = viewModel.offlineUserEmail != null
     val avatar = viewModel.avatarUrl
@@ -1189,7 +1220,8 @@ fun ProfileScreen(viewModel: AuthViewModel, onNavigateToSettings: () -> Unit, on
             "Shipping Address" to Icons.Default.LocationOn,
             "Payment Methods" to Icons.Default.Payment,
             "Notifications" to Icons.Default.Notifications,
-            "Settings" to Icons.Default.Settings
+            "Settings" to Icons.Default.Settings,
+            "Support" to Icons.Default.SupportAgent
         )
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1200,6 +1232,7 @@ fun ProfileScreen(viewModel: AuthViewModel, onNavigateToSettings: () -> Unit, on
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     onClick = { 
                         if (name == "Settings") onNavigateToSettings()
+                        if (name == "Support") onNavigateToSupport()
                     }
                 ) {
                     Row(

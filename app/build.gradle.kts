@@ -63,6 +63,11 @@ dependencies {
         implementation(libs.firebase.analytics)
         implementation(libs.kotlinx.coroutines.play.services)
 
+        // Retrofit
+        implementation(libs.retrofit.core)
+        implementation(libs.retrofit.gson)
+        implementation(libs.okhttp.logging)
+
 
         implementation(libs.androidx.compose.ui.google.fonts)
         implementation(libs.androidx.compose.ui)
