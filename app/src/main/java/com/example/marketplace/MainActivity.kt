@@ -197,7 +197,7 @@ interface CartDao {
     suspend fun clearCart()
 }
 
-@Database(entities = [CartItemEntity::class, SupportMessage::class], version = 1)
+@Database(entities = [CartItemEntity::class, SupportMessage::class], version = 2)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun cartDao(): CartDao
     abstract fun supportMessageDao(): SupportMessageDao
@@ -205,9 +205,13 @@ abstract class AppDatabase : RoomDatabase() {
 
 // ViewModel
 class MarketplaceViewModel(private val cartDao: CartDao) : ViewModel() {
-    private val firestore = Firebase.firestore
-    private val storage = Firebase.storage
-    private val productsCollection = firestore.collection("products")
+    private val firestore by lazy { 
+        try { Firebase.firestore } catch (e: Exception) { null } 
+    }
+    private val storage by lazy { 
+        try { Firebase.storage } catch (e: Exception) { null } 
+    }
+    private val productsCollection by lazy { firestore?.collection("products") }
 
     private val _promotions = MutableStateFlow(
         listOf(
@@ -222,18 +226,29 @@ class MarketplaceViewModel(private val cartDao: CartDao) : ViewModel() {
 
     init {
         // Observe products from Firestore
-        productsCollection.addSnapshotListener { snapshot, e ->
-            if (e != null) return@addSnapshotListener
-            val productList = snapshot?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id")?.toInt() ?: 0
-                val title = doc.getString("title") ?: ""
-                val price = doc.getDouble("price") ?: 0.0
-                val description = doc.getString("description") ?: ""
-                val imageUrl = doc.getString("imageUrl")
-                val colorValue = doc.getLong("colorValue") ?: 0xFFf3f4f9L
-                Product(id, title, price, description, imageUrl, Color(colorValue.toULong()))
-            } ?: emptyList()
-            _products.value = productList.ifEmpty { getMockProducts() }
+        try {
+            productsCollection?.addSnapshotListener { snapshot, e ->
+                if (e != null) return@addSnapshotListener
+                val productList = snapshot?.documents?.mapNotNull { doc ->
+                    val id = doc.getLong("id")?.toInt() ?: 0
+                    val title = doc.getString("title") ?: ""
+                    val price = doc.getDouble("price") ?: 0.0
+                    val description = doc.getString("description") ?: ""
+                    val imageUrl = doc.getString("imageUrl")
+                    val colorValue = doc.getLong("colorValue") ?: 0xFFf3f4f9L
+                    Product(id, title, price, description, imageUrl, Color(colorValue.toULong()))
+                } ?: emptyList()
+                if (productList.isNotEmpty()) {
+                    _products.value = productList
+                }
+            }
+        } catch (e: Exception) {
+            _products.value = getMockProducts()
+        }
+        
+        // Ensure we have at least mock products if Firestore is empty or fails
+        if (_products.value.isEmpty()) {
+            _products.value = getMockProducts()
         }
     }
 
@@ -267,11 +282,11 @@ class MarketplaceViewModel(private val cartDao: CartDao) : ViewModel() {
             var finalImageUrl: String? = null
             
             // Upload image to Firebase Storage if exists
-            if (imageUri != null) {
+            if (imageUri != null && storage != null) {
                 try {
                     val fileName = "products/${UUID.randomUUID()}.jpg"
                     val fileUri = Uri.parse(imageUri)
-                    val ref = storage.reference.child(fileName)
+                    val ref = storage!!.reference.child(fileName)
                     ref.putFile(fileUri).await()
                     finalImageUrl = ref.downloadUrl.await().toString()
                 } catch (e: Exception) {
@@ -289,13 +304,17 @@ class MarketplaceViewModel(private val cartDao: CartDao) : ViewModel() {
                 "colorValue" to color.value.toLong()
             )
             
-            productsCollection.document(newId.toString()).set(productData)
+            try {
+                productsCollection?.document(newId.toString())?.set(productData)
+            } catch (e: Exception) {}
         }
     }
 
     fun deleteProduct(productId: Int) {
         viewModelScope.launch {
-            productsCollection.document(productId.toString()).delete()
+            try {
+                productsCollection?.document(productId.toString())?.delete()
+            } catch (e: Exception) {}
             cartDao.deleteByProductId(productId)
         }
     }
@@ -481,7 +500,7 @@ class MainActivity : ComponentActivity() {
         val database = Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java, "marketplace-db"
-        ).build()
+        ).fallbackToDestructiveMigration().build()
         val cartDao = database.cartDao()
         val supportMessageDao = database.supportMessageDao()
 
