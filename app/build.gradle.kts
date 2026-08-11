@@ -64,6 +64,7 @@ dependencies {
         implementation(libs.kotlinx.coroutines.play.services)
 
 
+        implementation(libs.androidx.compose.ui.google.fonts)
         implementation(libs.androidx.compose.ui)
         implementation(libs.androidx.compose.ui.graphics)
         implementation(libs.androidx.compose.ui.tooling.preview)
