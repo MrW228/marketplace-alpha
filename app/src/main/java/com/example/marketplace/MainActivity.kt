@@ -61,6 +61,7 @@ import com.google.firebase.firestore.SetOptions
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.storage
 import coil.compose.AsyncImage
+import android.content.Context
 import com.example.marketplace.support.SupportScreen
 import com.example.marketplace.support.SupportViewModel
 import com.example.marketplace.support.SupportMessage
@@ -78,6 +79,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import com.example.marketplace.ui.theme.MyApplicationTheme
+import com.example.marketplace.ui.ModernHomeScreen
+import com.example.marketplace.ui.VividPurple
 import java.util.Locale
 import android.net.Uri
 import java.util.UUID
@@ -546,6 +549,9 @@ fun MarketplaceApp(
     val items = listOf(
         Screen.Home,
         Screen.Catalog,
+        Screen.Cart,
+        Screen.Express,
+        Screen.Card,
         Screen.Profile
     )
 
@@ -575,43 +581,61 @@ fun MarketplaceApp(
                 val currentRoute = currentDestination?.route
                 if (currentRoute != Screen.Login.route && currentRoute != Screen.Register.route) {
                     NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        tonalElevation = 0.dp,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 8.dp,
                     ) {
-                        items.forEach { screen ->
-                            val isSelected = (currentRoute == "main_tabs" && 
-                                             ((screen == Screen.Home && (navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") ?: 0) == 0) ||
-                                              (screen == Screen.Catalog && navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") == 1) ||
-                                              (screen == Screen.Profile && navController.currentBackStackEntry?.savedStateHandle?.get<Int>("pager_index") == 2)))
-                                             || currentRoute == screen.route
+                        items.forEach { item ->
+                            val pagerIndexValue = navBackStackEntry?.savedStateHandle?.get<Int>("pager_index") ?: 0
+                            
+                            val isSelected = if (currentRoute == "main_tabs") {
+                                items.indexOf(item) == pagerIndexValue
+                            } else {
+                                // If we are in Settings or Support, highlight Profile tab
+                                if ((currentRoute == Screen.Settings.route || currentRoute == Screen.Support.route) && item == Screen.Profile) {
+                                    true
+                                } else {
+                                    currentRoute == item.route
+                                }
+                            }
 
                             NavigationBarItem(
                                 icon = { 
-                                    AnimatedContent(targetState = screen.icon, label = "icon") { icon ->
-                                        Icon(icon, contentDescription = screen.title) 
+                                    BadgedBox(
+                                        badge = {
+                                            if (item == Screen.Cart) {
+                                                Badge { Text("1") }
+                                            }
+                                        }
+                                    ) {
+                                        AnimatedContent(
+                                            targetState = item.icon,
+                                            transitionSpec = {
+                                                fadeIn(tween(200)) + scaleIn(initialScale = 0.8f) togetherWith
+                                                fadeOut(tween(200)) + scaleOut(targetScale = 0.8f)
+                                            },
+                                            label = "icon_anim"
+                                        ) { icon ->
+                                            Icon(icon, contentDescription = item.title)
+                                        }
                                     }
                                 },
-                                label = { Text(screen.title, fontWeight = FontWeight.Bold) },
+                                label = { Text(item.title, fontSize = 10.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
                                 selected = isSelected,
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = MaterialTheme.colorScheme.primary,
                                     selectedTextColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                 onClick = {
-                                    if (screen in items) {
-                                        navController.navigate("main_tabs") {
-                                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                            launchSingleTop = true
-                                            restoreState = true
-                                        }
-                                        // Handle pager index via savedStateHandle or direct state if possible
-                                        navController.currentBackStackEntry?.savedStateHandle?.set("pager_index", items.indexOf(screen))
-                                    } else {
-                                        onNavigate(screen.route)
+                                    val index = items.indexOf(item)
+                                    if (index != -1) {
+                                        try {
+                                            navController.getBackStackEntry("main_tabs").savedStateHandle["pager_index"] = index
+                                        } catch (e: Exception) {}
                                     }
+                                    onNavigate(if (index != -1) "main_tabs" else item.route)
                                 }
                             )
                         }
@@ -679,15 +703,17 @@ fun MarketplaceApp(
                     )
                 }
                 composable("main_tabs") { backStackEntry ->
-                    val pagerIndex = backStackEntry.savedStateHandle.getStateFlow("pager_index", 0).collectAsState()
+                    val pagerIndex by backStackEntry.savedStateHandle.getStateFlow("pager_index", 0).collectAsState()
                     MainTabsScreen(
-                        initialPage = pagerIndex.value,
+                        initialPage = pagerIndex,
                         viewModel = viewModel,
                         authViewModel = authViewModel,
-                        onNavigateToAdmin = { navController.navigate(Screen.Admin.route) },
-                        onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                        onNavigateToSupport = { navController.navigate(Screen.Support.route) },
-                        onNavigateToCart = { navController.navigate(Screen.Cart.route) },
+                        onNavigateToAdmin = { onNavigate(Screen.Admin.route) },
+                        onNavigateToSettings = { onNavigate(Screen.Settings.route) },
+                        onNavigateToSupport = { onNavigate(Screen.Support.route) },
+                        onNavigateToCart = { 
+                            backStackEntry.savedStateHandle["pager_index"] = 2
+                        },
                         onNavigateToProductDetail = { productId ->
                             navController.navigate(Screen.ProductDetail.createRoute(productId))
                         },
@@ -697,7 +723,7 @@ fun MarketplaceApp(
                             }
                         },
                         onPageChanged = { index ->
-                            backStackEntry.savedStateHandle.set("pager_index", index)
+                            backStackEntry.savedStateHandle["pager_index"] = index
                         }
                     )
                 }
@@ -709,8 +735,17 @@ fun MarketplaceApp(
                 }
                 composable(Screen.Settings.route) { SettingsScreen(settingsViewModel, viewModel) { navController.popBackStack() } }
                 composable(Screen.Support.route) {
-                    val userId = authViewModel.currentUser?.uid ?: authViewModel.offlineUserEmail ?: "guest"
-                    val userEmail = authViewModel.currentUser?.email ?: authViewModel.offlineUserEmail ?: "Guest"
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    val sharedPrefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                    
+                    // Генерируем или получаем стабильный ID устройства, если пользователь не залогинен в Firebase
+                    val deviceId = sharedPrefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
+                        sharedPrefs.edit().putString("device_id", it).apply()
+                    }
+
+                    val userId = authViewModel.currentUser?.uid ?: authViewModel.offlineUserEmail ?: deviceId
+                    val userEmail = authViewModel.currentUser?.email ?: authViewModel.offlineUserEmail ?: "Anonymous ($userId)"
+                    
                     val supportViewModel: SupportViewModel = viewModel(
                         factory = object : ViewModelProvider.Factory {
                             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -751,10 +786,12 @@ fun MainTabsScreen(
     onLogout: () -> Unit,
     onPageChanged: (Int) -> Unit
 ) {
-    val pagerState = rememberPagerState(initialPage = initialPage) { 3 }
+    val pagerState = rememberPagerState(initialPage = initialPage) { 6 }
     
     LaunchedEffect(initialPage) {
-        pagerState.animateScrollToPage(initialPage)
+        if (pagerState.currentPage != initialPage) {
+            pagerState.scrollToPage(initialPage)
+        }
     }
 
     LaunchedEffect(pagerState.currentPage) {
@@ -763,12 +800,20 @@ fun MainTabsScreen(
 
     HorizontalPager(
         state = pagerState,
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        userScrollEnabled = true
     ) { page ->
         when (page) {
-            0 -> HomeScreen(viewModel, authViewModel, onNavigateToAdmin, { onPageChanged(2) }, onNavigateToCart, onNavigateToProductDetail)
+            0 -> ModernHomeScreen(
+                onNavigateToCart = onNavigateToCart,
+                onNavigateToProductDetail = onNavigateToProductDetail,
+                onNavigateToAdmin = onNavigateToAdmin
+            )
             1 -> CatalogScreen()
-            2 -> ProfileScreen(authViewModel, onNavigateToSettings, onNavigateToSupport, onLogout)
+            2 -> CartScreen(viewModel) { onPageChanged(0) }
+            3 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Express Screen") }
+            4 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Card Screen") }
+            5 -> ProfileScreen(authViewModel, onNavigateToSettings, onNavigateToSupport, onLogout)
         }
     }
 }
@@ -777,10 +822,12 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
     object Login : Screen("login", "Login", Icons.Default.LockOpen)
     object Register : Screen("register", "Register", Icons.Default.PersonAdd)
     object Home : Screen("home", "Home", Icons.Filled.Home)
-    object Catalog : Screen("catalog", "Catalog", Icons.Filled.ShoppingCart)
+    object Catalog : Screen("catalog", "Catalog", Icons.Filled.Search)
+    object Cart : Screen("cart", "Cart", Icons.Filled.ShoppingCart)
+    object Express : Screen("express", "Express", Icons.Filled.FlashOn)
+    object Card : Screen("card", "Card", Icons.Filled.CreditCard)
     object Profile : Screen("profile", "Profile", Icons.Filled.Person)
     object Admin : Screen("admin", "Admin", Icons.Filled.Person)
-    object Cart : Screen("cart", "Cart", Icons.Filled.ShoppingCart)
     object ProductDetail : Screen("product_detail/{productId}", "Detail", Icons.Filled.Info) {
         fun createRoute(productId: Int) = "product_detail/$productId"
     }
@@ -1865,9 +1912,9 @@ fun SettingsScreen(viewModel: SettingsViewModel, marketplaceViewModel: Marketpla
                             Surface(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(48.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { viewModel.themeMode = mode },
+                                    .height(48.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                onClick = { viewModel.themeMode = mode },
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                                 contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             ) {

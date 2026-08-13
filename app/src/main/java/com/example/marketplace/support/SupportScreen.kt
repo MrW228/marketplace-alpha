@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -25,6 +26,13 @@ import java.util.*
 fun SupportScreen(viewModel: SupportViewModel, onBack: () -> Unit) {
     val messages by viewModel.messages.collectAsState()
     var text by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -44,12 +52,12 @@ fun SupportScreen(viewModel: SupportViewModel, onBack: () -> Unit) {
                 .padding(padding)
         ) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                reverseLayout = false
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages) { message ->
                     MessageBubble(message)

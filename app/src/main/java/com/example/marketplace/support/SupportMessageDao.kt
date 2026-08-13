@@ -5,12 +5,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SupportMessageDao {
-    @Query("SELECT * FROM support_messages ORDER BY timestamp ASC")
-    fun getAllMessages(): Flow<List<SupportMessage>>
+    @Query("SELECT * FROM support_messages WHERE userId = :userId ORDER BY timestamp ASC")
+    fun getAllMessages(userId: String): Flow<List<SupportMessage>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(message: SupportMessage)
-
-    @Query("SELECT MAX(id) FROM support_messages WHERE sender = 'admin'")
-    suspend fun getLastAdminMessageId(): String?
 }
